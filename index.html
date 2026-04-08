@@ -853,26 +853,45 @@ async function viewAth(id){
   document.getElementById('adm-det-name').textContent=(a.fname||'')+' '+(a.lname||'');
   const uploads=a.uploads||{};
 
-  // Profile uploads with download links
+  // Profile uploads - list all files for this user and generate download links
   let upHtml='<p class="tsm tmut">No profile files uploaded.</p>';
   const upKeys=Object.keys(uploads);
   if(upKeys.length){
+    // List ALL files in bucket for this user
+    const{data:allFiles}=await sb.storage.from(BUCKET).list('',{limit:200});
+    const userFiles=allFiles?.filter(f=>f.name.startsWith(a.user_id+'_'))||[];
+    
     const items=await Promise.all(upKeys.map(async k=>{
-      const{data:list}=await sb.storage.from(BUCKET).list('',{search:a.user_id+'_'+k+'_'});
-      const match=list?.find(f=>f.name.startsWith(a.user_id+'_'+k+'_'));
-      let btn='';
-      if(match){const{data:url}=await sb.storage.from(BUCKET).createSignedUrl(match.name,3600);if(url)btn=`<a href="${url.signedUrl}" target="_blank" class="btn btn-sm">↓ Download</a>`;}
-      return `<div class="ditem"><div><div class="ditem-name">${k}</div><div class="ditem-meta">${uploads[k]}</div></div>${btn}</div>`;
+      // Find file matching this key
+      const match=userFiles.find(f=>f.name.includes('_'+k+'_'));
+      let btn='<span class="tsm tmut">File not found in storage</span>';
+      if(match){
+        const{data:url,error:ue}=await sb.storage.from(BUCKET).createSignedUrl(match.name,86400);
+        if(url&&!ue) btn=`<a href="${url.signedUrl}" target="_blank" class="btn btn-sm btn-primary">↓ Download</a>`;
+      }
+      const labelMap={bc:'Birth Certificate',ph:'Photograph',sig:'Signature',ae:'Age Estimation Form',ef:'School/Employer Form'};
+      return `<div class="ditem"><div><div class="ditem-name">${labelMap[k]||k}</div><div class="ditem-meta">${uploads[k]}</div></div>${btn}</div>`;
     }));
     upHtml=items.join('');
+    
+    // Also show any other user files not in uploads object
+    const unmapped=userFiles.filter(f=>!upKeys.some(k=>f.name.includes('_'+k+'_'))&&!f.name.includes('_doc_'));
+    if(unmapped.length){
+      const extra=await Promise.all(unmapped.map(async f=>{
+        const{data:url}=await sb.storage.from(BUCKET).createSignedUrl(f.name,86400);
+        return url?`<div class="ditem"><div><div class="ditem-name">${f.name}</div></div><a href="${url.signedUrl}" target="_blank" class="btn btn-sm btn-primary">↓ Download</a></div>`:'';
+      }));
+      upHtml+=extra.join('');
+    }
   }
 
-  // Identity docs
+  // Identity docs with download links
   let idHtml='<p class="tsm tmut">No identity documents.</p>';
   if(docs?.length){
     const items=await Promise.all(docs.map(async d=>{
-      const{data:url}=await sb.storage.from(BUCKET).createSignedUrl(d.file_path,3600);
-      return `<div class="ditem"><div><div class="ditem-name">${d.doc_type} — ${d.doc_number||'—'}</div><div class="ditem-meta">${d.place||''} · ${new Date(d.uploaded_at).toLocaleDateString('en-IN')}</div></div>${url?`<a href="${url.signedUrl}" target="_blank" class="btn btn-sm">↓ Download</a>`:''}</div>`;
+      const{data:url,error:ue}=await sb.storage.from(BUCKET).createSignedUrl(d.file_path,86400);
+      const btn=(!ue&&url)?`<a href="${url.signedUrl}" target="_blank" class="btn btn-sm btn-primary">↓ Download</a>`:'<span class="tsm tmut">File unavailable</span>';
+      return `<div class="ditem"><div><div class="ditem-name">${d.doc_type} — ${d.doc_number||'—'}</div><div class="ditem-meta">${d.place||''} · ${new Date(d.uploaded_at).toLocaleDateString('en-IN')}</div></div>${btn}</div>`;
     }));
     idHtml=items.join('');
   }
